@@ -24,7 +24,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isOtpMode = false;
   bool _isRegisterMode = false;
-  UserRole _selectedRole = UserRole.superAdmin;
 
   @override
   void dispose() {
@@ -35,45 +34,86 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _handleSignIn() async {
+  void _toggleRegisterMode(bool register) {
+    setState(() {
+      _isRegisterMode = register;
+      // New account registration always verifies OTP first
+      _isOtpMode = register;
+    });
+  }
+
+  UserRole _resolveRoleFromEmail(String email) {
+    final e = email.toLowerCase();
+    if (e.startsWith('admin@')) return UserRole.admin;
+    if (e.startsWith('inventory@')) return UserRole.inventoryManagement;
+    if (e.startsWith('sales@')) return UserRole.salesPanel;
+    if (e.startsWith('orders@') || e.startsWith('order@')) {
+      return UserRole.orderProcessing;
+    }
+    if (e.startsWith('daybook@')) return UserRole.daybookManagement;
+    return UserRole.superAdmin;
+  }
+
+  Future<void> _handleSubmit() async {
     final auth = context.read<AuthProvider>();
+    final email = _emailController.text.trim().isEmpty
+        ? 'superadmin@steelsuvidha.in'
+        : _emailController.text.trim();
     final credential = _isOtpMode
         ? _otpController.text.trim()
         : _passwordController.text.trim();
+    final role = _resolveRoleFromEmail(email);
 
     final success = await auth.login(
-      identifier: _emailController.text.trim().isEmpty
-          ? 'admin@steelsuvidha.in'
-          : _emailController.text.trim(),
+      identifier: email,
       password: credential.isEmpty ? '123456' : credential,
-      role: _selectedRole,
+      role: role,
     );
 
-    if (success && mounted) {
-      context.go(_selectedRole.routePath);
+    if (!success || !mounted) return;
+
+    if (_isRegisterMode) {
+      // Go to Store Details & Password creation after OTP confirmation
+      context.go('/store-setup');
+    } else {
+      context.go(role.routePath);
     }
+  }
+
+  Widget _buildLogo({double? height}) {
+    return Image.asset(
+      'assets/images/logo.png',
+      height: height,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => const Text(
+        'Steel Suvidha',
+        style: TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isMobile = Responsive.isMobile(context);
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double brandLogoWidth = (screenSize.width * 0.28).clamp(180.0, 360.0);
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Stack(
           children: [
-            // Main Layout
             Row(
               children: [
-                // Expanded Black Sidebar on Tablet/Desktop when open
                 if (_isMenuOpen && !isMobile)
                   Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: _buildExpandedSidebar(),
                   ),
-
-                // Left Brand Area (Shown when sidebar is closed on Tablet/Desktop)
                 if (!_isMenuOpen && !isMobile) ...[
                   Expanded(
                     flex: 5,
@@ -81,24 +121,18 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(32.0),
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 360),
-                          child: Image.asset(
-                            'assets/images/logo.png',
-                            fit: BoxFit.contain,
-                          ),
+                          constraints: BoxConstraints(maxWidth: brandLogoWidth),
+                          child: _buildLogo(),
                         ),
                       ),
                     ),
                   ),
-                  // Vertical Divider from Figma
                   Container(
                     width: 1,
                     margin: const EdgeInsets.symmetric(vertical: 48),
                     color: AppColors.border,
                   ),
                 ],
-
-                // Right Form Panel
                 Expanded(
                   flex: 5,
                   child: Center(
@@ -116,8 +150,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ],
             ),
-
-            // Top-Left Hamburger Button when sidebar is closed
             if (!_isMenuOpen)
               Positioned(
                 top: 20,
@@ -146,8 +178,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
-            // Mobile Overlay Drawer when menu is opened on small screens
             if (_isMenuOpen && isMobile)
               Positioned.fill(
                 child: GestureDetector(
@@ -157,7 +187,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.all(12),
                     child: GestureDetector(
-                      onTap: () {}, // Prevent tap-through
+                      onTap: () {},
                       child: _buildExpandedSidebar(),
                     ),
                   ),
@@ -169,7 +199,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// Black Rounded Sidebar matching Screen 2
   Widget _buildExpandedSidebar() {
     return Container(
       width: 245,
@@ -182,31 +211,19 @@ class _LoginScreenState extends State<LoginScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top Row: White-adjusted Logo + Close Button
           Row(
             children: [
               Expanded(
-                child: ColorFiltered(
-                  // Keeps icon colors while making dark "Steel suvidha" text crisp on black
-                  colorFilter: const ColorFilter.mode(
-                    Colors.transparent,
-                    BlendMode.dst,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
                   ),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Image.asset(
-                      'assets/images/logo.png',
-                      height: 30,
-                      fit: BoxFit.contain,
-                    ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: _buildLogo(height: 30),
                 ),
               ),
               const SizedBox(width: 8),
@@ -219,81 +236,66 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
           const SizedBox(height: 44),
-
-          // Workspace
           _SidebarItem(
             title: 'Workspace',
             isBold: true,
             onTap: () => setState(() => _isMenuOpen = false),
           ),
           const SizedBox(height: 22),
-
-          // Sign up
           _SidebarItem(
             title: 'Sign up',
             isBold: true,
             isSelected: _isRegisterMode,
             onTap: () {
-              setState(() {
-                _isRegisterMode = true;
-                _isMenuOpen = false;
-              });
+              _toggleRegisterMode(true);
+              setState(() => _isMenuOpen = false);
             },
           ),
           const SizedBox(height: 22),
-
-          // Login / Sign in
           _SidebarItem(
             title: 'Login/Sign in',
             isBold: true,
             isSelected: !_isRegisterMode,
             onTap: () {
-              setState(() {
-                _isRegisterMode = false;
-                _isMenuOpen = false;
-              });
+              _toggleRegisterMode(false);
+              setState(() => _isMenuOpen = false);
             },
           ),
-          const SizedBox(height: 12),
-
-          // Sub-options: With Password & With OTP
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _SidebarItem(
-                  title: 'With Password',
-                  fontSize: 12,
-                  isSelected: !_isRegisterMode && !_isOtpMode,
-                  onTap: () {
-                    setState(() {
-                      _isRegisterMode = false;
-                      _isOtpMode = false;
-                      _isMenuOpen = false;
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                _SidebarItem(
-                  title: 'With OTP',
-                  fontSize: 12,
-                  isSelected: !_isRegisterMode && _isOtpMode,
-                  onTap: () {
-                    setState(() {
-                      _isRegisterMode = false;
-                      _isOtpMode = true;
-                      _isMenuOpen = false;
-                    });
-                  },
-                ),
-              ],
+          if (!_isRegisterMode) ...[
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SidebarItem(
+                    title: 'With Password',
+                    fontSize: 12,
+                    isSelected: !_isOtpMode,
+                    onTap: () {
+                      setState(() {
+                        _isOtpMode = false;
+                        _isMenuOpen = false;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _SidebarItem(
+                    title: 'With OTP',
+                    fontSize: 12,
+                    isSelected: _isOtpMode,
+                    onTap: () {
+                      setState(() {
+                        _isOtpMode = true;
+                        _isMenuOpen = false;
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-
+          ],
           const Spacer(),
-
-          // Bottom: My account
           InkWell(
             onTap: () => setState(() => _isMenuOpen = false),
             child: const Row(
@@ -320,7 +322,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// Right Side Authentication Form matching Screens 1 & 2
   Widget _buildAuthForm(bool isMobile) {
     final isLoading = context.watch<AuthProvider>().isLoading;
 
@@ -331,17 +332,9 @@ class _LoginScreenState extends State<LoginScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (isMobile) ...[
-            Center(
-              child: Image.asset(
-                'assets/images/logo.png',
-                height: 44,
-                fit: BoxFit.contain,
-              ),
-            ),
+            Center(child: _buildLogo(height: 44)),
             const SizedBox(height: 24),
           ],
-
-          // Header Title
           const Text(
             'Welcome to',
             style: TextStyle(
@@ -361,25 +354,23 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Please enter your details',
-            style: TextStyle(
+          Text(
+            _isRegisterMode
+                ? 'Create your store account to get started'
+                : 'Please enter your details',
+            style: const TextStyle(
               fontSize: 13,
               color: AppColors.textSecondary,
               fontWeight: FontWeight.w400,
             ),
           ),
           const SizedBox(height: 24),
-
-          // Name Field
           _buildLabel('Name'),
           _buildTextField(
             controller: _nameController,
             hint: 'Enter Your name',
           ),
           const SizedBox(height: 14),
-
-          // Email Field
           _buildLabel('Email'),
           _buildTextField(
             controller: _emailController,
@@ -387,13 +378,11 @@ class _LoginScreenState extends State<LoginScreen> {
             keyboardType: TextInputType.emailAddress,
           ),
           const SizedBox(height: 14),
-
-          // Password OR OTP Field
-          _buildLabel(_isOtpMode ? 'One-Time Password (OTP)' : 'Password'),
+          _buildLabel(_isOtpMode ? 'OTP' : 'Password'),
           if (_isOtpMode)
             _buildTextField(
               controller: _otpController,
-              hint: 'Enter 6-digit OTP',
+              hint: 'Enter Your one time Password',
               keyboardType: TextInputType.number,
             )
           else
@@ -414,79 +403,72 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
 
-          const SizedBox(height: 8),
-
-          // Helper Links Row: Login with OTP instead | Forgot Password?
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _isOtpMode = !_isOtpMode),
-                child: Text(
-                  _isOtpMode ? 'Login with Password instead' : 'Login with OTP instead',
-                  style: const TextStyle(
+          // Helper links: hidden in Sign Up mode since new accounts create a password after OTP
+          if (!_isRegisterMode) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () => setState(() => _isOtpMode = !_isOtpMode),
+                  child: Text(
+                    _isOtpMode
+                        ? 'Login with Password'
+                        : 'Login with OTP instead',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1D4ED8),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content:
+                            Text('Password reset link sent to your email.'),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Forgot Password?',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.brandRed,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Verification OTP sent to your email.'),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Send / Resend OTP',
+                  style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF1D4ED8),
                   ),
                 ),
               ),
-              GestureDetector(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Password reset link sent to your email.'),
-                    ),
-                  );
-                },
-                child: const Text(
-                  'Forgot Password?',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.brandRed,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 14),
-
-          // Role Selector (For testing all 6 ERP panels during development)
-          _buildLabel('Select Workspace Role (Dev Preview)'),
-          Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF93C5FD)),
             ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<UserRole>(
-                value: _selectedRole,
-                isExpanded: true,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-                items: UserRole.values.map((role) {
-                  return DropdownMenuItem(
-                    value: role,
-                    child: Text(role.label),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) setState(() => _selectedRole = val);
-                },
-              ),
-            ),
-          ),
+          ],
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 22),
 
-          // Primary Gradient "Sign in" Button
+          // Primary CTA: "Sign up" when registering, "Sign in" when logging in
           SizedBox(
             width: double.infinity,
             height: 44,
@@ -498,14 +480,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF2563EB).withValues(alpha: 0.28),
+                    color: const Color(0xFF2563EB).withOpacity(0.28),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
                 ],
               ),
               child: ElevatedButton(
-                onPressed: isLoading ? null : _handleSignIn,
+                onPressed: isLoading ? null : _handleSubmit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
@@ -533,28 +515,22 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 14),
-
-          // "or Sign in with"
-          const Center(
+          Center(
             child: Text(
-              'or Sign in with',
-              style: TextStyle(
+              _isRegisterMode ? 'or Sign up with' : 'or Sign in with',
+              style: const TextStyle(
                 fontSize: 11,
                 color: AppColors.textSecondary,
               ),
             ),
           ),
-
           const SizedBox(height: 12),
-
-          // "Sign in with Google" Outlined Button
           SizedBox(
             width: double.infinity,
             height: 42,
             child: OutlinedButton(
-              onPressed: _handleSignIn,
+              onPressed: _handleSubmit,
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Color(0xFF93C5FD)),
                 shape: RoundedRectangleBorder(
@@ -582,9 +558,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Text(
-                    'Sign in with Google',
-                    style: TextStyle(
+                  Text(
+                    _isRegisterMode
+                        ? 'Sign up with Google'
+                        : 'Sign in with Google',
+                    style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w500,
                       color: AppColors.textPrimary,
@@ -594,13 +572,10 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // Bottom Footer: Don't have an account ? Register your Store
           Center(
             child: GestureDetector(
-              onTap: () => setState(() => _isRegisterMode = !_isRegisterMode),
+              onTap: () => _toggleRegisterMode(!_isRegisterMode),
               child: RichText(
                 text: TextSpan(
                   style: const TextStyle(
