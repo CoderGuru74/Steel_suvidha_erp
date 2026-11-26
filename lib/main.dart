@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'core/constants/app_colors.dart';
 import 'core/router/app_router.dart';
 import 'features/auth/providers/auth_provider.dart';
+import 'features/dashboards/super_admin/providers/super_admin_provider.dart';
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AuthProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => SuperAdminProvider()),
+      ],
       child: const SteelSuvidhaApp(),
     ),
   );
@@ -24,8 +27,7 @@ class SteelSuvidhaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         scaffoldBackgroundColor: AppColors.background,
-        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
-        textTheme: GoogleFonts.interTextTheme(),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1D63ED)),
         useMaterial3: true,
       ),
       routerConfig: appRouter,
