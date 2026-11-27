@@ -17,6 +17,7 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
   final _passcodeController = TextEditingController();
   UserRole? _selectedRole;
   bool _isMenuOpen = false;
+  bool _obscurePasscode = true;
 
   @override
   void dispose() {
@@ -24,31 +25,46 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
     super.dispose();
   }
 
-  Future<void> _handleWorkspaceSignIn() async {
-    if (_selectedRole == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select your role first.')),
-      );
-      return;
-    }
+  List<UserRole> get _availableRoles =>
+      UserRole.values.where((role) => role != UserRole.superAdmin).toList();
 
-    if (_passcodeController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your role passcode.')),
-      );
+  bool _requiresPasscode(UserRole role) {
+    return role == UserRole.admin || role == UserRole.daybookManagement;
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _handleWorkspaceSignIn() async {
+    final role = _selectedRole;
+    if (role == null || role == UserRole.superAdmin) {
+      _showSnack('Please select a workspace role first.');
       return;
     }
 
     final auth = context.read<AuthProvider>();
-    final success = await auth.login(
-      identifier: auth.currentUser?.identifier ?? 'admin@steelsuvidha.in',
-      password: _passcodeController.text.trim(),
-      role: _selectedRole!,
-    );
+    final passcode = _passcodeController.text.trim();
 
-    if (success && mounted) {
-      context.go(_selectedRole!.routePath);
+    if (_requiresPasscode(role)) {
+      if (passcode.isEmpty) {
+        _showSnack('Enter your Role PIN for ${role.label}.');
+        return;
+      }
+
+      if (passcode != auth.rolePin.trim()) {
+        _showSnack('Invalid Role PIN for ${role.label}.');
+        return;
+      }
     }
+
+    auth.setSelectedRole(role);
+
+    if (!mounted) return;
+    context.go(role.routePath);
   }
 
   Widget _buildLogo({double? height}) {
@@ -75,6 +91,8 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
     final String createdStoreName = authProvider.storeName;
     final double brandLogoWidth =
         (MediaQuery.sizeOf(context).width * 0.28).clamp(180.0, 360.0);
+    final bool needsPasscode =
+        _selectedRole != null && _requiresPasscode(_selectedRole!);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -148,7 +166,6 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
                             ),
                             const SizedBox(height: 24),
 
-                            // Dynamic Store Name from Registration
                             _buildLabel('Store Name'),
                             Container(
                               height: 42,
@@ -186,7 +203,6 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
                             ),
                             const SizedBox(height: 14),
 
-                            // Select your Role Dropdown
                             _buildLabel('Select your Role'),
                             Container(
                               height: 42,
@@ -218,58 +234,77 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
                                     color: AppColors.textPrimary,
                                     fontWeight: FontWeight.w500,
                                   ),
-                                  items: UserRole.values.map((role) {
+                                  items: _availableRoles.map((role) {
                                     return DropdownMenuItem(
                                       value: role,
                                       child: Text(role.label),
                                     );
                                   }).toList(),
-                                  onChanged: (val) =>
-                                      setState(() => _selectedRole = val),
+                                  onChanged: (val) {
+                                    setState(() {
+                                      _selectedRole = val;
+                                      _passcodeController.clear();
+                                    });
+                                  },
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 14),
 
-                            // Role Passcode
-                            _buildLabel('Role Passcode'),
-                            SizedBox(
-                              height: 42,
-                              child: TextField(
-                                controller: _passcodeController,
-                                obscureText: true,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textPrimary,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: 'Enter Your role Passcode',
-                                  hintStyle: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF94A3B8),
+                            if (needsPasscode) ...[
+                              const SizedBox(height: 14),
+                              _buildLabel('Role PIN'),
+                              SizedBox(
+                                height: 42,
+                                child: TextField(
+                                  controller: _passcodeController,
+                                  obscureText: _obscurePasscode,
+                                  keyboardType: TextInputType.number,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: AppColors.textPrimary,
                                   ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: const BorderSide(
-                                      color: Color(0xFF93C5FD),
+                                  decoration: InputDecoration(
+                                    hintText: 'Enter your created Role PIN',
+                                    hintStyle: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF94A3B8),
                                     ),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: const BorderSide(
-                                      color: Color(0xFF1D63ED),
-                                      width: 1.5,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _obscurePasscode
+                                            ? Icons.visibility_outlined
+                                            : Icons.visibility_off_outlined,
+                                        size: 18,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _obscurePasscode =
+                                            !_obscurePasscode,
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF93C5FD),
+                                      ),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF1D63ED),
+                                        width: 1.5,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
+                            ],
+
                             const SizedBox(height: 8),
-
                             Align(
                               alignment: Alignment.centerRight,
                               child: GestureDetector(
@@ -301,7 +336,7 @@ class _WorkspaceSelectScreenState extends State<WorkspaceSelectScreen> {
                                   boxShadow: [
                                     BoxShadow(
                                       color: const Color(0xFF2563EB)
-                                          .withOpacity(0.28),
+                                          .withValues(alpha: 0.28),
                                       blurRadius: 10,
                                       offset: const Offset(0, 4),
                                     ),

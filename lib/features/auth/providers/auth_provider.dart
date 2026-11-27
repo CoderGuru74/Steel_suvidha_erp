@@ -8,7 +8,8 @@ class ErpUser {
   final String email;
   final String phone;
   final String role;
-  final String? storeName;
+  final String storeName;
+  final String rolePin;
 
   const ErpUser({
     required this.id,
@@ -16,13 +17,22 @@ class ErpUser {
     required this.email,
     required this.phone,
     required this.role,
-    this.storeName,
+    this.storeName = 'Steel Suvidha',
+    this.rolePin = '1234',
   });
 
   String get identifier => email.isNotEmpty ? email : phone;
 
-  factory ErpUser.fromJson(JsonMap json, {String? fallbackStoreName}) {
-    final rawStore = (json['store_name'] ?? json['storeName'] ?? '').toString().trim();
+  factory ErpUser.fromJson(
+    JsonMap json, {
+    String fallbackStoreName = 'Steel Suvidha',
+    String fallbackRolePin = '1234',
+  }) {
+    final rawStore =
+        (json['store_name'] ?? json['storeName'] ?? '').toString().trim();
+    final rawPin =
+        (json['role_pin'] ?? json['rolePin'] ?? '').toString().trim();
+
     return ErpUser(
       id: (json['id'] as num?)?.toInt() ?? 0,
       fullName: (json['full_name'] ?? '').toString(),
@@ -30,37 +40,94 @@ class ErpUser {
       phone: (json['phone'] ?? '').toString(),
       role: (json['role'] ?? 'Admin').toString(),
       storeName: rawStore.isNotEmpty ? rawStore : fallbackStoreName,
+      rolePin: rawPin.isNotEmpty ? rawPin : fallbackRolePin,
     );
   }
 }
 
 class AuthProvider extends ChangeNotifier {
   static const _storeNameKey = 'steel_suvidha_store_name';
+  static const _rolePinKey = 'steel_suvidha_role_pin';
 
   ErpUser? _currentUser;
   String _storeName = 'Steel Suvidha';
-  String _selectedRole = 'Super Admin';
+  String _rolePin = '1234';
+  String _selectedRole = 'Admin';
   bool _isLoading = false;
   String? _errorMessage;
 
   ErpUser? get currentUser => _currentUser;
-  String get storeName => _storeName;
+
+  String get storeName =>
+      (_currentUser?.storeName.isNotEmpty ?? false)
+          ? _currentUser!.storeName
+          : _storeName;
+
+  String get rolePin =>
+      (_currentUser?.rolePin.isNotEmpty ?? false)
+          ? _currentUser!.rolePin
+          : _rolePin;
+
   String get selectedRole => _selectedRole;
   bool get isAuthenticated => _currentUser != null;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  Future<void> _persistStoreName(String name) async {
-    final clean = name.trim();
-    if (clean.isEmpty) return;
-    _storeName = clean;
+  Future<void> _persistStoreAndPin({
+    String? storeName,
+    String? rolePin,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storeNameKey, clean);
+    if (storeName != null && storeName.trim().isNotEmpty) {
+      final cleanStore = storeName.trim();
+      _storeName = cleanStore;
+      await prefs.setString(_storeNameKey, cleanStore);
+    }
+    if (rolePin != null && rolePin.trim().isNotEmpty) {
+      final cleanPin = rolePin.trim();
+      _rolePin = cleanPin;
+      await prefs.setString(_rolePinKey, cleanPin);
+    }
   }
 
   Future<void> setStoreName(String name) async {
-    await _persistStoreName(name);
+    await _persistStoreAndPin(storeName: name);
     notifyListeners();
+  }
+
+  Future<bool> saveStoreSetup({
+    required String storeName,
+    required String rolePin,
+  }) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    final cleanStore = storeName.trim();
+    final cleanPin = rolePin.trim().isEmpty ? _rolePin : rolePin.trim();
+
+    try {
+      final data = await ErpApiClient.instance.post(
+        '/api/auth/store-setup',
+        <String, dynamic>{
+          'storeName': cleanStore,
+          'rolePin': cleanPin,
+        },
+      );
+      _currentUser = ErpUser.fromJson(
+        data['user'] as JsonMap,
+        fallbackStoreName: cleanStore,
+        fallbackRolePin: cleanPin,
+      );
+      await _persistStoreAndPin(storeName: cleanStore, rolePin: cleanPin);
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   String _formatRole(Object? role) {
@@ -129,6 +196,7 @@ class AuthProvider extends ChangeNotifier {
     String? email,
     String? phone,
     String? password,
+    String? rolePin,
     String? otp,
     Object? role,
   }) async {
@@ -136,7 +204,9 @@ class AuthProvider extends ChangeNotifier {
     _errorMessage = null;
     final cleanStore =
         storeName.trim().isEmpty ? 'Steel Suvidha' : storeName.trim();
-    await _persistStoreName(cleanStore);
+    final cleanPin =
+        (rolePin != null && rolePin.trim().isNotEmpty) ? rolePin.trim() : _rolePin;
+    await _persistStoreAndPin(storeName: cleanStore, rolePin: cleanPin);
     notifyListeners();
 
     try {
@@ -161,6 +231,7 @@ class AuthProvider extends ChangeNotifier {
         'password': resolvedPassword,
         'role': resolvedRole,
         'storeName': cleanStore,
+        'rolePin': cleanPin,
       };
       if (otp != null && otp.trim().isNotEmpty) {
         payload['otp'] = otp.trim();
@@ -174,11 +245,13 @@ class AuthProvider extends ChangeNotifier {
       final user = ErpUser.fromJson(
         data['user'] as JsonMap,
         fallbackStoreName: cleanStore,
+        fallbackRolePin: cleanPin,
       );
       _currentUser = user;
-      if (user.storeName != null && user.storeName!.isNotEmpty) {
-        await _persistStoreName(user.storeName!);
-      }
+      await _persistStoreAndPin(
+        storeName: user.storeName,
+        rolePin: user.rolePin,
+      );
       return true;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -195,13 +268,17 @@ class AuthProvider extends ChangeNotifier {
     required String phone,
     required String password,
     String? storeName,
+    String? rolePin,
     String? otp,
     Object? role,
   }) async {
     _isLoading = true;
     _errorMessage = null;
     if (storeName != null && storeName.trim().isNotEmpty) {
-      await _persistStoreName(storeName.trim());
+      await _persistStoreAndPin(storeName: storeName.trim());
+    }
+    if (rolePin != null && rolePin.trim().isNotEmpty) {
+      await _persistStoreAndPin(rolePin: rolePin.trim());
     }
     notifyListeners();
 
@@ -213,6 +290,7 @@ class AuthProvider extends ChangeNotifier {
         'password': password,
         'role': _formatRole(role),
         'storeName': _storeName,
+        'rolePin': _rolePin,
       };
       if (otp != null && otp.trim().isNotEmpty) {
         payload['otp'] = otp.trim();
@@ -226,11 +304,13 @@ class AuthProvider extends ChangeNotifier {
       final user = ErpUser.fromJson(
         data['user'] as JsonMap,
         fallbackStoreName: _storeName,
+        fallbackRolePin: _rolePin,
       );
       _currentUser = user;
-      if (user.storeName != null && user.storeName!.isNotEmpty) {
-        await _persistStoreName(user.storeName!);
-      }
+      await _persistStoreAndPin(
+        storeName: user.storeName,
+        rolePin: user.rolePin,
+      );
       return true;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -270,11 +350,13 @@ class AuthProvider extends ChangeNotifier {
       final user = ErpUser.fromJson(
         data['user'] as JsonMap,
         fallbackStoreName: _storeName,
+        fallbackRolePin: _rolePin,
       );
       _currentUser = user;
-      if (user.storeName != null && user.storeName!.isNotEmpty) {
-        await _persistStoreName(user.storeName!);
-      }
+      await _persistStoreAndPin(
+        storeName: user.storeName,
+        rolePin: user.rolePin,
+      );
       return true;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -309,11 +391,13 @@ class AuthProvider extends ChangeNotifier {
       final user = ErpUser.fromJson(
         data['user'] as JsonMap,
         fallbackStoreName: _storeName,
+        fallbackRolePin: _rolePin,
       );
       _currentUser = user;
-      if (user.storeName != null && user.storeName!.isNotEmpty) {
-        await _persistStoreName(user.storeName!);
-      }
+      await _persistStoreAndPin(
+        storeName: user.storeName,
+        rolePin: user.rolePin,
+      );
       return true;
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -355,10 +439,14 @@ class AuthProvider extends ChangeNotifier {
   Future<void> restoreSession() async {
     final prefs = await SharedPreferences.getInstance();
     final savedStore = prefs.getString(_storeNameKey);
+    final savedPin = prefs.getString(_rolePinKey);
     if (savedStore != null && savedStore.trim().isNotEmpty) {
       _storeName = savedStore.trim();
-      notifyListeners();
     }
+    if (savedPin != null && savedPin.trim().isNotEmpty) {
+      _rolePin = savedPin.trim();
+    }
+    notifyListeners();
 
     final token = await ErpApiClient.instance.getToken();
     if (token == null || token.isEmpty) return;
@@ -367,11 +455,13 @@ class AuthProvider extends ChangeNotifier {
       final user = ErpUser.fromJson(
         data['user'] as JsonMap,
         fallbackStoreName: _storeName,
+        fallbackRolePin: _rolePin,
       );
       _currentUser = user;
-      if (user.storeName != null && user.storeName!.isNotEmpty) {
-        await _persistStoreName(user.storeName!);
-      }
+      await _persistStoreAndPin(
+        storeName: user.storeName,
+        rolePin: user.rolePin,
+      );
       notifyListeners();
     } catch (_) {
       await ErpApiClient.instance.clearToken();

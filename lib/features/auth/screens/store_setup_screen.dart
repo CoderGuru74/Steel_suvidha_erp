@@ -18,6 +18,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _storeNameController = TextEditingController();
+  final _rolePinController = TextEditingController();
   final _phoneController = TextEditingController();
   final _gstController = TextEditingController();
   final _panController = TextEditingController();
@@ -30,6 +31,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
   File? _storeLogoFile;
   bool _obscurePass = true;
   bool _obscureConfirm = true;
+  bool _obscurePin = true;
 
   final List<String> _businessTypes = const [
     'Retail & Wholesale Steel Dealer',
@@ -39,8 +41,21 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    final auth = context.read<AuthProvider>();
+    if (auth.storeName.isNotEmpty && auth.storeName != 'Steel Suvidha') {
+      _storeNameController.text = auth.storeName;
+    }
+    if (auth.rolePin.isNotEmpty) {
+      _rolePinController.text = auth.rolePin;
+    }
+  }
+
+  @override
   void dispose() {
     _storeNameController.dispose();
+    _rolePinController.dispose();
     _phoneController.dispose();
     _gstController.dispose();
     _panController.dispose();
@@ -49,6 +64,13 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _pickStoreLogo() async {
@@ -65,41 +87,70 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
         });
       }
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to login')),
-      );
+      _showSnack('Could not pick store logo from gallery');
     }
   }
 
   Future<void> _handleSubmit() async {
     final auth = context.read<AuthProvider>();
+    final storeName = _storeNameController.text.trim();
+    final rolePin = _rolePinController.text.trim();
+    final newPass = _newPasswordController.text.trim();
+    final confirmPass = _confirmPasswordController.text.trim();
 
-    if (_newPasswordController.text != _confirmPasswordController.text) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to login')),
-      );
+    if (storeName.isEmpty) {
+      _showSnack('Please enter your Store / Firm Name');
       return;
     }
 
-    final bool created = await auth.registerStore(
-      ownerName: 'Store Owner',
-      email: 'owner@steelsuvidha.in',
-      storeName: _storeNameController.text.trim(),
-      password: _newPasswordController.text.trim(),
+    if (rolePin.isEmpty || rolePin.length < 4) {
+      _showSnack('Please create a Role PIN (at least 4 digits)');
+      return;
+    }
+
+    if (newPass.isNotEmpty || confirmPass.isNotEmpty) {
+      if (newPass != confirmPass) {
+        _showSnack('Password and Confirm Password do not match');
+        return;
+      }
+    }
+
+    if (auth.isAuthenticated) {
+      final saved = await auth.saveStoreSetup(
+        storeName: storeName,
+        rolePin: rolePin,
+      );
+      if (!mounted) return;
+      if (!saved) {
+        _showSnack(auth.errorMessage ?? 'Failed to save store details');
+        return;
+      }
+      _showSnack('Store "$storeName" and Role PIN saved');
+      context.go('/workspace');
+      return;
+    }
+
+    if (newPass.isEmpty) {
+      _showSnack('Please create a password to register your store');
+      return;
+    }
+
+    final created = await auth.registerStore(
+      ownerName: auth.currentUser?.fullName ?? 'Store Owner',
+      email: auth.currentUser?.email ?? 'owner@steelsuvidha.in',
+      phone: _phoneController.text.trim(),
+      storeName: storeName,
+      rolePin: rolePin,
+      password: newPass,
     );
 
     if (!mounted) return;
 
     if (created) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Account created. Now login')),
-      );
+      _showSnack('Store "$storeName" registered. Sign in to continue');
       context.go('/login');
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to login')),
-      );
+      _showSnack(auth.errorMessage ?? 'Failed to register store');
     }
   }
 
@@ -175,7 +226,6 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
               ),
             ],
 
-            // Right Form Panel with Sticky Bottom Submit Button
             Expanded(
               flex: 5,
               child: Center(
@@ -222,7 +272,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 const Text(
-                                  'Enter your business details, store logo, and set your password',
+                                  'Enter your store name, create a role PIN, and save details',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: AppColors.textSecondary,
@@ -325,11 +375,83 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                 ),
                                 const SizedBox(height: 10),
 
-                                _fieldLabel('Store / Firm Name *'),
-                                _inputBox(
-                                  controller: _storeNameController,
-                                  hint: 'Enter your store or company name',
-                                ),
+                                if (!isMobile)
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            _fieldLabel('Store / Firm Name *'),
+                                            _inputBox(
+                                              controller: _storeNameController,
+                                              hint: 'Enter store name',
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            _fieldLabel('Create Role PIN *'),
+                                            _inputBox(
+                                              controller: _rolePinController,
+                                              hint: '4-6 digit PIN',
+                                              keyboardType: TextInputType.number,
+                                              obscure: _obscurePin,
+                                              suffix: IconButton(
+                                                icon: Icon(
+                                                  _obscurePin
+                                                      ? Icons
+                                                          .visibility_outlined
+                                                      : Icons
+                                                          .visibility_off_outlined,
+                                                  size: 17,
+                                                  color:
+                                                      AppColors.textSecondary,
+                                                ),
+                                                onPressed: () => setState(
+                                                  () =>
+                                                      _obscurePin = !_obscurePin,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                else ...[
+                                  _fieldLabel('Store / Firm Name *'),
+                                  _inputBox(
+                                    controller: _storeNameController,
+                                    hint: 'Enter your store or company name',
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _fieldLabel('Create Role PIN *'),
+                                  _inputBox(
+                                    controller: _rolePinController,
+                                    hint: 'Create 4-6 digit Role PIN',
+                                    keyboardType: TextInputType.number,
+                                    obscure: _obscurePin,
+                                    suffix: IconButton(
+                                      icon: Icon(
+                                        _obscurePin
+                                            ? Icons.visibility_outlined
+                                            : Icons.visibility_off_outlined,
+                                        size: 17,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _obscurePin = !_obscurePin,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                                 const SizedBox(height: 10),
 
                                 _fieldLabel('Business Category'),
@@ -489,7 +611,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            _fieldLabel('Create Password *'),
+                                            _fieldLabel('Create Password'),
                                             _inputBox(
                                               controller:
                                                   _newPasswordController,
@@ -521,7 +643,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            _fieldLabel('Confirm Password *'),
+                                            _fieldLabel('Confirm Password'),
                                             _inputBox(
                                               controller:
                                                   _confirmPasswordController,
@@ -550,7 +672,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                     ],
                                   )
                                 else ...[
-                                  _fieldLabel('Create Password *'),
+                                  _fieldLabel('Create Password'),
                                   _inputBox(
                                     controller: _newPasswordController,
                                     hint: 'Create strong password',
@@ -569,7 +691,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 10),
-                                  _fieldLabel('Confirm Password *'),
+                                  _fieldLabel('Confirm Password'),
                                   _inputBox(
                                     controller: _confirmPasswordController,
                                     hint: 'Re-enter your password',
@@ -595,7 +717,6 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                         ),
                       ),
 
-                      // Pinned Submit Button Bar (always visible without scrolling)
                       Container(
                         padding: EdgeInsets.fromLTRB(
                           isMobile ? 24.0 : 40.0,
@@ -621,7 +742,7 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
                               boxShadow: [
                                 BoxShadow(
                                   color: const Color(0xFF2563EB)
-                                      .withOpacity(0.28),
+                                      .withValues(alpha: 0.28),
                                   blurRadius: 10,
                                   offset: const Offset(0, 4),
                                 ),

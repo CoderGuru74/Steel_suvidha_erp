@@ -79,6 +79,25 @@ async function verifyAdminPassword(
   return trimmed === fallback;
 }
 
+function formatUserRow(user: Record<string, unknown>) {
+  return {
+    id: user.id,
+    full_name: user.full_name,
+    email: user.email,
+    phone: user.phone || '',
+    role: user.role,
+    store_name:
+      typeof user.store_name === 'string' && user.store_name.trim().length > 0
+        ? user.store_name.trim()
+        : 'Steel Suvidha',
+    role_pin:
+      typeof user.role_pin === 'string' && user.role_pin.trim().length > 0
+        ? user.role_pin.trim()
+        : '1234',
+    created_at: user.created_at,
+  };
+}
+
 app.get('/health', async (_req: Request, res: Response) => {
   try {
     await pool.query('SELECT 1');
@@ -175,7 +194,9 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email,
       phone = '',
       password,
-      role = 'Super Admin',
+      role = 'Admin',
+      storeName = 'Steel Suvidha',
+      rolePin = '1234',
       otp,
     } = req.body;
 
@@ -187,6 +208,17 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     }
 
     const cleanEmail = String(email).trim().toLowerCase();
+    const cleanStoreName =
+      String(storeName || 'Steel Suvidha').trim() || 'Steel Suvidha';
+    const cleanPin = String(rolePin || '1234').trim() || '1234';
+
+    // Enforce single Super Admin: never allow public registration with Super Admin role
+    const requestedRole = String(role).trim();
+    const safeRole =
+      requestedRole.toLowerCase() === 'super admin' ||
+      requestedRole.toLowerCase() === 'superadmin'
+        ? 'Admin'
+        : requestedRole || 'Admin';
 
     if (otp !== undefined && String(otp).trim().length > 0) {
       const otpRes = await pool.query(
@@ -218,15 +250,17 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(String(password), 10);
     const insertRes = await pool.query(
-      `INSERT INTO users (full_name, email, phone, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, full_name, email, phone, role, created_at`,
+      `INSERT INTO users (full_name, email, phone, password_hash, role, store_name, role_pin)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, full_name, email, phone, role, store_name, role_pin, created_at`,
       [
         String(fullName).trim(),
         cleanEmail,
         String(phone).trim(),
         passwordHash,
-        String(role).trim(),
+        safeRole,
+        cleanStoreName,
+        cleanPin,
       ]
     );
 
@@ -237,7 +271,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       { expiresIn: '7d' }
     );
 
-    res.status(201).json({ token, user });
+    res.status(201).json({ token, user: formatUserRow(user) });
   } catch {
     res.status(500).json({ error: 'Failed to create account' });
   }
@@ -273,16 +307,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       { expiresIn: '7d' }
     );
 
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-      },
-    });
+    res.json({ token, user: formatUserRow(user) });
   } catch {
     res.status(500).json({ error: 'Login failed' });
   }
@@ -333,16 +358,7 @@ app.post('/api/auth/login-otp', async (req: Request, res: Response) => {
       { expiresIn: '7d' }
     );
 
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-      },
-    });
+    res.json({ token, user: formatUserRow(user) });
   } catch {
     res.status(500).json({ error: 'OTP login failed' });
   }
@@ -401,16 +417,47 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
 app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
   try {
     const userRes = await pool.query(
-      'SELECT id, full_name, email, phone, role FROM users WHERE id = $1',
+      'SELECT id, full_name, email, phone, role, store_name, role_pin FROM users WHERE id = $1',
       [req.user?.userId]
     );
     if (userRes.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    res.json({ user: userRes.rows[0] });
+    res.json({ user: formatUserRow(userRes.rows[0]) });
   } catch {
     res.status(500).json({ error: 'Failed to fetch current user' });
+  }
+});
+
+app.post('/api/auth/store-setup', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { storeName, rolePin } = req.body;
+    const cleanStore = String(storeName || '').trim();
+    const cleanPin = String(rolePin || '').trim();
+
+    if (!cleanStore) {
+      res.status(400).json({ error: 'Store name is required' });
+      return;
+    }
+
+    const updRes = await pool.query(
+      `UPDATE users
+       SET store_name = $1,
+           role_pin = CASE WHEN $2 <> '' THEN $2 ELSE role_pin END
+       WHERE id = $3
+       RETURNING id, full_name, email, phone, role, store_name, role_pin`,
+      [cleanStore, cleanPin, req.user?.userId]
+    );
+
+    if (updRes.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({ user: formatUserRow(updRes.rows[0]) });
+  } catch {
+    res.status(500).json({ error: 'Failed to save store details' });
   }
 });
 
